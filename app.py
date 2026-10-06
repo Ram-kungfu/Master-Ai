@@ -1,6 +1,6 @@
 # ================================================================
-# 🧠 Master AI — Supreme Court System v2
-# 7 AI + 3 Round Debate + Strict Judge + Cross-Verification
+# 🧠 Master AI — Supreme Court System (Final)
+# 7 AI + 3 Round Debate + Claude Judge + Cross-Verification
 # ================================================================
 
 import os
@@ -11,7 +11,7 @@ from google import genai
 
 
 # ================================================================
-# 1. API KEYS
+# 1. API KEYS (कहीं missing हो तो चलता रहे)
 # ================================================================
 def get_secret(k):
     try:
@@ -19,115 +19,151 @@ def get_secret(k):
     except Exception:
         return os.getenv(k)
 
+OPENROUTER_KEY = get_secret("OPENROUTER_API_KEY")   # ⭐ मुख्य key
 GEMINI_KEY     = get_secret("GEMINI_API_KEY")
 OPENAI_KEY     = get_secret("OPENAI_API_KEY")
 ANTHROPIC_KEY  = get_secret("ANTHROPIC_API_KEY")
 DEEPSEEK_KEY   = get_secret("DEEPSEEK_API_KEY")
 PERPLEXITY_KEY = get_secret("PERPLEXITY_API_KEY")
 GROK_KEY       = get_secret("GROK_API_KEY")
-OPENROUTER_KEY = get_secret("OPENROUTER_API_KEY")
+
+OR_BASE = "https://openrouter.ai/api/v1"
 
 
 # ================================================================
-# 2. हर AI से सवाल पूछने वाले functions
+# 2. हर AI का function — पहले OpenRouter से, fail हो तो direct
 # ================================================================
+async def _ask_openrouter(model_id, prompt, name):
+    """OpenRouter के जरिए किसी भी model से जवाब"""
+    try:
+        client = AsyncOpenAI(api_key=OPENROUTER_KEY, base_url=OR_BASE)
+        resp = await client.chat.completions.create(
+            model=model_id,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000,
+            timeout=90,
+        )
+        return {"name": name, "answer": resp.choices[0].message.content, "status": "ok"}
+    except Exception as e:
+        return {"name": name, "answer": f"❌ {str(e)[:150]}", "status": "error"}
+
+
+# --- Gemini (OpenRouter via) ---
 async def ask_gemini(prompt):
-    try:
-        client = genai.Client(api_key=GEMINI_KEY)
-        resp = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-        return {"name": "Gemini", "answer": resp.text, "status": "ok"}
-    except Exception as e:
-        return {"name": "Gemini", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    # पहले OpenRouter से try, fail हो तो direct Google
+    r = await _ask_openrouter("google/gemini-2.5-flash", prompt, "Gemini")
+    if r["status"] == "ok":
+        return r
+    if GEMINI_KEY:
+        try:
+            client = genai.Client(api_key=GEMINI_KEY)
+            resp = await client.aio.models.generate_content(
+                model="gemini-2.5-flash", contents=prompt,
+            )
+            return {"name": "Gemini", "answer": resp.text, "status": "ok"}
+        except Exception as e:
+            return {"name": "Gemini", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    return r
 
 
+# --- ChatGPT ---
 async def ask_openai(prompt):
-    try:
-        client = AsyncOpenAI(api_key=OPENAI_KEY)
-        resp = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000, timeout=90,
-        )
-        return {"name": "ChatGPT", "answer": resp.choices[0].message.content, "status": "ok"}
-    except Exception as e:
-        return {"name": "ChatGPT", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    r = await _ask_openrouter("openai/gpt-4o-mini", prompt, "ChatGPT")
+    if r["status"] == "ok":
+        return r
+    if OPENAI_KEY:
+        try:
+            client = AsyncOpenAI(api_key=OPENAI_KEY)
+            resp = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000, timeout=90,
+            )
+            return {"name": "ChatGPT", "answer": resp.choices[0].message.content, "status": "ok"}
+        except Exception as e:
+            return {"name": "ChatGPT", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    return r
 
 
+# --- Claude ---
 async def ask_claude(prompt):
-    try:
-        client = AsyncOpenAI(
-            api_key=ANTHROPIC_KEY,
-            base_url="https://api.anthropic.com/v1",
-        )
-        resp = await client.chat.completions.create(
-            model="claude-3-5-sonnet-20241022",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000, timeout=90,
-        )
-        return {"name": "Claude", "answer": resp.choices[0].message.content, "status": "ok"}
-    except Exception as e:
-        return {"name": "Claude", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    r = await _ask_openrouter("anthropic/claude-3.5-sonnet", prompt, "Claude")
+    if r["status"] == "ok":
+        return r
+    if ANTHROPIC_KEY:
+        try:
+            client = AsyncOpenAI(api_key=ANTHROPIC_KEY, base_url="https://api.anthropic.com/v1")
+            resp = await client.chat.completions.create(
+                model="claude-3-5-sonnet-20241022",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000, timeout=90,
+            )
+            return {"name": "Claude", "answer": resp.choices[0].message.content, "status": "ok"}
+        except Exception as e:
+            return {"name": "Claude", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    return r
 
 
+# --- DeepSeek ---
 async def ask_deepseek(prompt):
-    try:
-        client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
-        resp = await client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000, timeout=90,
-        )
-        return {"name": "DeepSeek", "answer": resp.choices[0].message.content, "status": "ok"}
-    except Exception as e:
-        return {"name": "DeepSeek", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    r = await _ask_openrouter("deepseek/deepseek-chat", prompt, "DeepSeek")
+    if r["status"] == "ok":
+        return r
+    if DEEPSEEK_KEY:
+        try:
+            client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+            resp = await client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000, timeout=90,
+            )
+            return {"name": "DeepSeek", "answer": resp.choices[0].message.content, "status": "ok"}
+        except Exception as e:
+            return {"name": "DeepSeek", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    return r
 
 
+# --- Perplexity ---
 async def ask_perplexity(prompt):
-    try:
-        client = AsyncOpenAI(api_key=PERPLEXITY_KEY, base_url="https://api.perplexity.ai")
-        resp = await client.chat.completions.create(
-            model="sonar-pro",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000, timeout=90,
-        )
-        return {"name": "Perplexity", "answer": resp.choices[0].message.content, "status": "ok"}
-    except Exception as e:
-        return {"name": "Perplexity", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    r = await _ask_openrouter("perplexity/sonar-pro", prompt, "Perplexity")
+    if r["status"] == "ok":
+        return r
+    if PERPLEXITY_KEY:
+        try:
+            client = AsyncOpenAI(api_key=PERPLEXITY_KEY, base_url="https://api.perplexity.ai")
+            resp = await client.chat.completions.create(
+                model="sonar-pro",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000, timeout=90,
+            )
+            return {"name": "Perplexity", "answer": resp.choices[0].message.content, "status": "ok"}
+        except Exception as e:
+            return {"name": "Perplexity", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    return r
 
 
+# --- Grok ---
 async def ask_grok(prompt):
-    try:
-        client = AsyncOpenAI(
-            api_key=GROK_KEY,
-            base_url="https://api.x.ai/v1",
-        )
-        resp = await client.chat.completions.create(
-            model="grok-2-latest",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000, timeout=90,
-        )
-        return {"name": "Grok", "answer": resp.choices[0].message.content, "status": "ok"}
-    except Exception as e:
-        return {"name": "Grok", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    r = await _ask_openrouter("x-ai/grok-2-latest", prompt, "Grok")
+    if r["status"] == "ok":
+        return r
+    if GROK_KEY:
+        try:
+            client = AsyncOpenAI(api_key=GROK_KEY, base_url="https://api.x.ai/v1")
+            resp = await client.chat.completions.create(
+                model="grok-2-latest",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000, timeout=90,
+            )
+            return {"name": "Grok", "answer": resp.choices[0].message.content, "status": "ok"}
+        except Exception as e:
+            return {"name": "Grok", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    return r
 
 
+# --- OpenRouter Free Router (7वां AI) ---
 async def ask_openrouter_free(prompt):
-    try:
-        client = AsyncOpenAI(
-            api_key=OPENROUTER_KEY,
-            base_url="https://openrouter.ai/api/v1",
-        )
-        resp = await client.chat.completions.create(
-            model="openrouter/free",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000, timeout=90,
-        )
-        return {"name": "OpenRouter", "answer": resp.choices[0].message.content, "status": "ok"}
-    except Exception as e:
-        return {"name": "OpenRouter", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+    return await _ask_openrouter("openrouter/free", prompt, "OpenRouter")
 
 
 # ================================================================
@@ -147,7 +183,7 @@ async def round_1_initial(query):
 
 
 # ================================================================
-# 4. ROUND 2-3 — AI आपस में बहस करें, counter-argument बनाएं
+# 4. ROUND 2-3 — AI आपस में बहस करें
 # ================================================================
 async def debate_round(query, prev_answers, round_num):
     summary = "\n\n".join([
@@ -186,7 +222,7 @@ async def debate_round(query, prev_answers, round_num):
 
 
 # ================================================================
-# 5. SUPREME JUDGE — हर जवाब पर सख्त जाँच
+# 5. SUPREME JUDGE — Claude ही मुख्य Judge
 # ================================================================
 async def supreme_judge(query, all_rounds):
     summary_parts = []
@@ -208,41 +244,41 @@ async def supreme_judge(query, all_rounds):
 {full_debate}
 
 ============================================================
-तुम्हारा काम — 7 सख्त चरणों में (कोई चरण न छोड़ो):
+तुम्हारा काम — 7 सख्त चरणों में:
 ============================================================
 
 **चरण 1 — सबको पढ़ो:** हर round के हर AI का जवाब ध्यान से पढ़ो।
 
 **चरण 2 — Cross-Verification:** कौन-कौन से AI एक ही बात कह रहे हैं? कहाँ टकराव है?
 
-**चरण 3 — Counter-Argument:** हर मुख्य जवाब के खिलाफ एक विरोधी तर्क बनाओ। "अगर यह गलत हुआ तो?"
+**चरण 3 — Counter-Argument:** हर मुख्य जवाब के खिलाफ एक विरोधी तर्क बनाओ।
 
-**चरण 4 — Evidence माँगो:** किस जवाब के पीछे तथ्य/आंकड़ा/स्रोत है? जिसके पीछे सबूत नहीं — उसे कमजोर मानो।
+**चरण 4 — Evidence:** किस जवाब के पीछे तथ्य/आंकड़ा/स्रोत है?
 
-**चरण 5 — Weak Points:** किस जवाब में कमी, अधूरापन, या शक है — उजागर करो।
+**चरण 5 — Weak Points:** किस जवाब में कमी या शक है — उजागर करो।
 
-**चरण 6 — Consensus:** बहुमत किस बात पर सहमत है? अल्पमत क्या कह रहा है?
+**चरण 6 — Consensus:** बहुमत किस बात पर सहमत है?
 
-**चरण 7 — FINAL VERDICT:** वह जवाब दो जो सारी जाँच में टिक गया। ऐसा जवाब जिस पर कोई उंगली न उठा सके।
+**चरण 7 — FINAL VERDICT:** वह जवाब दो जो सारी जाँच में टिक गया।
 
 ============================================================
-Output Format (हिंदी में, साफ-साफ):
+Output Format (हिंदी में):
 ============================================================
 
 🎯 **अंतिम सही जवाब (Final Verdict):**
-[सबसे सही, पूरा, स्पष्ट और पक्का जवाब — सबूत के साथ]
+[सबसे सही, पूरा, स्पष्ट और पक्का जवाब]
 
 🧪 **Counter-Arguments की जाँच:**
-[कौन-कौन से विरोधी तर्क उठाए गए, और वे कैसे खारिज हुए]
+[कौन-कौन से विरोधी तर्क उठाए गए]
 
 📊 **Evidence (सबूत):**
-[किस तथ्य, आंकड़े या स्रोत के आधार पर यह जवाब सही है]
+[किस तथ्य/स्रोत के आधार पर सही है]
 
 🤝 **Consensus (सहमति):**
-[कितने AI एक ही बात पर आए — नाम के साथ]
+[कितने AI एक ही बात पर आए]
 
-⚠️ **Weak Points (कमजोरियाँ):**
-[कहाँ अभी भी शक बाकी है — पूरी ईमानदारी से]
+⚠️ **Weak Points:**
+[कहाँ अभी भी शक बाकी है]
 
 🔍 **हर AI का योगदान:**
 - Gemini: [क्या कहा]
@@ -253,22 +289,25 @@ Output Format (हिंदी में, साफ-साफ):
 - Grok: [क्या कहा]
 - OpenRouter: [क्या कहा]
 
-💯 **Confidence:** [X]% — [क्यों इतना? बाकी शक क्यों?]
+💯 **Confidence:** [X]% — [कारण]
 
-🛡️ **क्या यह जवाब काटा जा सकता है?** [हाँ/नहीं — कारण सहित]
+🛡️ **क्या यह जवाब काटा जा सकता है?** [हाँ/नहीं — कारण]
 """
 
-    # Judge chain: Claude → GPT-4o → DeepSeek → Gemini
+    # ⭐ Judge: Claude मुख्य, बाकी fallback
     judges = [
-        ("Claude", ANTHROPIC_KEY, "https://api.anthropic.com/v1", "claude-3-5-sonnet-20241022"),
-        ("ChatGPT", OPENAI_KEY, None, "gpt-4o-mini"),
-        ("DeepSeek", DEEPSEEK_KEY, "https://api.deepseek.com", "deepseek-chat"),
-        ("Grok", GROK_KEY, "https://api.x.ai/v1", "grok-2-latest"),
+        ("Claude (OpenRouter)", OPENROUTER_KEY, OR_BASE, "anthropic/claude-3.5-sonnet"),
+        ("Claude (Direct)", ANTHROPIC_KEY, "https://api.anthropic.com/v1", "claude-3-5-sonnet-20241022"),
+        ("ChatGPT", OPENROUTER_KEY, OR_BASE, "openai/gpt-4o-mini"),
+        ("DeepSeek", OPENROUTER_KEY, OR_BASE, "deepseek/deepseek-chat"),
+        ("Grok", OPENROUTER_KEY, OR_BASE, "x-ai/grok-2-latest"),
     ]
 
     for judge_name, key, base_url, model in judges:
+        if not key:
+            continue
         try:
-            client = AsyncOpenAI(api_key=key, base_url=base_url) if base_url else AsyncOpenAI(api_key=key)
+            client = AsyncOpenAI(api_key=key, base_url=base_url)
             resp = await client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": judge_prompt}],
@@ -288,19 +327,15 @@ Output Format (हिंदी में, साफ-साफ):
 async def master_ai(query, total_rounds=3):
     all_rounds = []
 
-    # Round 1 — पहला जवाब
     r1 = await round_1_initial(query)
     all_rounds.append({"round": 1, "answers": r1})
 
-    # Round 2-N — बहस
     for i in range(2, total_rounds + 1):
         prev = all_rounds[-1]["answers"]
         rN = await debate_round(query, prev, i)
         all_rounds.append({"round": i, "answers": rN})
 
-    # Final Supreme Judge
     final = await supreme_judge(query, all_rounds)
-
     return {"rounds": all_rounds, "final": final}
 
 
@@ -324,21 +359,25 @@ if "messages" not in st.session_state:
 
 with st.sidebar:
     st.markdown("### 🧠 Master AI")
-    st.caption("Supreme Court System v2")
+    st.caption("Supreme Court System")
     st.divider()
     st.markdown("**🤖 7 AI:**")
     for n in ["Gemini", "ChatGPT", "Claude", "DeepSeek", "Perplexity", "Grok", "OpenRouter"]:
         st.markdown(f'<span class="badge">• {n}</span>', unsafe_allow_html=True)
     st.divider()
-    rounds = st.slider("Debate Rounds", 1, 5, 3, 
-                       help="3 = सबसे बेहतर | 4-5 = गहरे सवालों के लिए")
+    st.markdown("**⚖️ Judge:** Claude 3.5 Sonnet")
     st.divider()
+    rounds = st.slider("Debate Rounds", 1, 5, 3,
+                       help="3 = बेहतर | 4-5 = गहरे सवालों के लिए")
+    st.divider()
+    if not OPENROUTER_KEY:
+        st.error("⚠️ OPENROUTER_API_KEY नहीं मिली")
     if st.button("🧹 Clear Chat"):
         st.session_state.messages = []
         st.rerun()
 
 st.markdown('<div class="big-title">🧠 Master AI — Supreme Court</div>', unsafe_allow_html=True)
-st.caption("7 AI · 3 Round Debate · Cross-Verification · Strict Judge")
+st.caption("7 AI · 3 Round Debate · Cross-Verification · Claude Judge")
 
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
