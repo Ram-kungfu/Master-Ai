@@ -1,5 +1,5 @@
 # ================================================================
-# 🧠 Master AI — Complete Fixed Version
+# 🧠 Master AI — Complete Final Version
 # ================================================================
 
 import os
@@ -20,15 +20,17 @@ load_dotenv()
 BASE_URL = "https://openrouter.ai/api/v1"
 DB_PATH = "master_ai_history.db"
 
+# ✅ स्मार्ट राउटर - खुद कोई भी चालू फ्री मॉडल चुन लेगा
 MODELS = {
-    "Gemini":    "google/gemini-2.5-flash-exp:free",
-    "DeepSeek":  "deepseek/deepseek-chat-v3-0528:free",
+    "Gemini":    "google/gemini-2.5-flash-preview:free",
+    "DeepSeek":  "deepseek/deepseek-r1:free",
     "Llama 3.3": "meta-llama/llama-3.3-70b-instruct:free",
-    "Qwen 3":    "qwen/qwen3.6-plus:free",
+    "Qwen":      "qwen/qwen3.6-plus:free",
     "Mistral":   "mistralai/mistral-small-3.1-24b-instruct:free",
 }
 
 JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+
 IMAGE_MODELS = {
     "Flux Schnell": "black-forest-labs/flux-schnell",
     "DALL-E 3":     "openai/dall-e-3",
@@ -41,11 +43,10 @@ DEBATE_ROUNDS = 2
 
 
 # ================================================================
-# API KEY & CLIENTS (sirf ek baar - yahan)
+# API KEY & CLIENTS
 # ================================================================
 def get_api_key():
-    """Streamlit secrets + env dono se key lo - BULLETPROOF"""
-    # Try 1: Streamlit secrets - safe get()
+    """Streamlit secrets + env dono se key lo"""
     try:
         key = st.secrets.get("OPENROUTER_API_KEY")
         if key:
@@ -53,14 +54,12 @@ def get_api_key():
     except Exception:
         pass
 
-    # Try 2: st.secrets dictionary access
     try:
         if "OPENROUTER_API_KEY" in st.secrets:
             return str(st.secrets["OPENROUTER_API_KEY"]).strip()
     except Exception:
         pass
 
-    # Try 3: Environment variable (fallback)
     try:
         key = os.getenv("OPENROUTER_API_KEY")
         if key:
@@ -74,9 +73,7 @@ def get_api_key():
 def get_async_client():
     key = get_api_key()
     if not key:
-        raise ValueError(
-            "OPENROUTER_API_KEY nahi mili. Streamlit Cloud → Settings → Secrets check karein."
-        )
+        raise ValueError("OPENROUTER_API_KEY nahi mili.")
     return AsyncOpenAI(api_key=key, base_url=BASE_URL)
 
 
@@ -288,7 +285,7 @@ def enhance_prompt(user_input):
     try:
         client = get_sync_client()
         resp = client.chat.completions.create(
-            model="google/gemini-2.0-flash-exp:free",
+            model="google/gemini-2.5-flash-preview:free",
             messages=[{"role": "user", "content":
                 f"Convert to detailed English image prompt: {user_input}. Output only the prompt."}],
             max_tokens=300,
@@ -356,7 +353,6 @@ with st.sidebar:
     st.markdown("### 🧠 Master AI")
     st.caption(f"Session: `{st.session_state.session_id}`")
 
-    # API key check
     if not get_api_key():
         st.error("⚠️ API Key नहीं मिली! Settings → Secrets check करें।")
 
