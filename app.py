@@ -21,14 +21,14 @@ BASE_URL = "https://openrouter.ai/api/v1"
 DB_PATH = "master_ai_history.db"
 
 MODELS = {
-    "Gemini":    "google/gemini-2.0-flash-exp:free",
-    "DeepSeek":  "deepseek/deepseek-chat-v3-0324:free",
+    "Gemini":    "google/gemini-2.5-flash-exp:free",
+    "DeepSeek":  "deepseek/deepseek-chat-v3-0528:free",
     "Llama 3.3": "meta-llama/llama-3.3-70b-instruct:free",
-    "Qwen 2.5":  "qwen/qwen-2.5-72b-instruct:free",
-    "Mistral":   "mistralai/mistral-small-24b-instruct-2501:free",
+    "Qwen 3":    "qwen/qwen3.6-plus:free",
+    "Mistral":   "mistralai/mistral-small-3.1-24b-instruct:free",
 }
 
-JUDGE_MODEL = "google/gemini-2.0-flash-exp:free"
+JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 IMAGE_MODELS = {
     "Flux Schnell": "black-forest-labs/flux-schnell",
     "DALL-E 3":     "openai/dall-e-3",
