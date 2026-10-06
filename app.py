@@ -1,352 +1,311 @@
 # ================================================================
-# 🧠 Master AI — Complete Final Version (11 AI + 3 Judge Fallback)
+# 🧠 Master AI — Supreme Court System v2
+# 7 AI + 3 Round Debate + Strict Judge + Cross-Verification
 # ================================================================
 
 import os
-import uuid
-import base64
-import sqlite3
 import asyncio
-import tempfile
-from datetime import datetime
-
 import streamlit as st
-from openai import AsyncOpenAI, OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# ---- CONFIG ----
-BASE_URL = "https://openrouter.ai/api/v1"
-DB_PATH = "master_ai_history.db"
-
-# ✅ 8 असली AI + 3 राउटर = 11 मॉडल
-MODELS = {
-    "DeepSeek":   "deepseek/deepseek-r1:free",
-    "Qwen":       "qwen/qwen3.6-plus:free",
-    "Llama":      "meta-llama/llama-3.3-70b-instruct:free",
-    "GPT-OSS":    "openai/gpt-oss-120b:free",
-    "MiniMax":    "minimax/minimax-m2.5:free",
-    "Nemotron":   "nvidia/nemotron-3-super-120b-a12b:free",
-    "Mistral":    "mistralai/mistral-small-3.1-24b-instruct:free",
-    "Gemma":      "google/gemma-4-26b-a4b-it:free",
-    "Router 1":   "openrouter/free",
-    "Router 2":   "openrouter/free",
-    "Router 3":   "openrouter/free",
-}
-
-# ✅ जज — 1 मुख्य + 2 बैकअप
-JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
-JUDGE_FALLBACKS = [
-    "deepseek/deepseek-r1:free",
-    "openrouter/free",
-]
-
-IMAGE_MODELS = {
-    "Flux Schnell": "black-forest-labs/flux-schnell",
-    "DALL-E 3":     "openai/dall-e-3",
-}
-
-MAX_TOKENS = 30000
-TEMPERATURE = 0.7
-TIMEOUT = 60
-DEBATE_ROUNDS = 2
+from openai import AsyncOpenAI
+from google import genai
 
 
 # ================================================================
-# API KEY & CLIENTS
+# 1. API KEYS
 # ================================================================
-def get_api_key():
+def get_secret(k):
     try:
-        key = st.secrets.get("OPENROUTER_API_KEY")
-        if key:
-            return str(key).strip()
+        return st.secrets.get(k)
     except Exception:
-        pass
-    try:
-        if "OPENROUTER_API_KEY" in st.secrets:
-            return str(st.secrets["OPENROUTER_API_KEY"]).strip()
-    except Exception:
-        pass
-    try:
-        key = os.getenv("OPENROUTER_API_KEY")
-        if key:
-            return str(key).strip()
-    except Exception:
-        pass
-    return None
+        return os.getenv(k)
 
-
-def get_async_client():
-    key = get_api_key()
-    if not key:
-        raise ValueError("OPENROUTER_API_KEY nahi mili.")
-    return AsyncOpenAI(api_key=key, base_url=BASE_URL)
-
-
-def get_sync_client():
-    key = get_api_key()
-    if not key:
-        raise ValueError("OPENROUTER_API_KEY nahi mili.")
-    return OpenAI(api_key=key, base_url=BASE_URL)
+GEMINI_KEY     = get_secret("GEMINI_API_KEY")
+OPENAI_KEY     = get_secret("OPENAI_API_KEY")
+ANTHROPIC_KEY  = get_secret("ANTHROPIC_API_KEY")
+DEEPSEEK_KEY   = get_secret("DEEPSEEK_API_KEY")
+PERPLEXITY_KEY = get_secret("PERPLEXITY_API_KEY")
+GROK_KEY       = get_secret("GROK_API_KEY")
+OPENROUTER_KEY = get_secret("OPENROUTER_API_KEY")
 
 
 # ================================================================
-# DATABASE
+# 2. हर AI से सवाल पूछने वाले functions
 # ================================================================
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS chats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT, role TEXT, content TEXT,
-        mode TEXT, timestamp TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS ai_responses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER, model_name TEXT,
-        response TEXT, timestamp TEXT)""")
-    conn.commit()
-    conn.close()
-
-
-def save_message(session_id, role, content, mode="chat"):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO chats (session_id, role, content, mode, timestamp) VALUES (?, ?, ?, ?, ?)",
-        (session_id, role, content, mode, datetime.now().isoformat())
-    )
-    cid = c.lastrowid
-    conn.commit()
-    conn.close()
-    return cid
-
-
-def save_ai_responses(chat_id, responses):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    for r in responses:
-        c.execute(
-            "INSERT INTO ai_responses (chat_id, model_name, response, timestamp) VALUES (?, ?, ?, ?)",
-            (chat_id, r["name"], r["answer"], datetime.now().isoformat())
+async def ask_gemini(prompt):
+    try:
+        client = genai.Client(api_key=GEMINI_KEY)
+        resp = await client.aio.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
         )
-    conn.commit()
-    conn.close()
-
-
-def get_history(session_id, limit=50):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT role, content FROM chats WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-        (session_id, limit)
-    )
-    rows = c.fetchall()
-    conn.close()
-    return list(reversed(rows))
-
-
-def get_all_sessions():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute(
-        "SELECT session_id, COUNT(*) FROM chats GROUP BY session_id ORDER BY MIN(timestamp) DESC LIMIT 10"
-    )
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-
-def clear_session(sid):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM chats WHERE session_id = ?", (sid,))
-    conn.commit()
-    conn.close()
-
-
-def clear_all():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("DELETE FROM chats")
-    conn.execute("DELETE FROM ai_responses")
-    conn.commit()
-    conn.close()
-
-
-init_db()
-
-
-# ================================================================
-# CORE AI
-# ================================================================
-async def ask_model(name, model_id, query):
-    try:
-        client = get_async_client()
-        resp = await client.chat.completions.create(
-            model=model_id,
-            messages=[{"role": "user", "content": query}],
-            max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
-            timeout=TIMEOUT,
-        )
-        return {"name": name, "answer": resp.choices[0].message.content, "status": "ok"}
+        return {"name": "Gemini", "answer": resp.text, "status": "ok"}
     except Exception as e:
-        return {"name": name, "answer": f"❌ {str(e)[:120]}", "status": "error"}
+        return {"name": "Gemini", "answer": f"❌ {str(e)[:120]}", "status": "error"}
 
 
-async def get_all_answers(query):
-    tasks = [ask_model(n, m, query) for n, m in MODELS.items()]
+async def ask_openai(prompt):
+    try:
+        client = AsyncOpenAI(api_key=OPENAI_KEY)
+        resp = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000, timeout=90,
+        )
+        return {"name": "ChatGPT", "answer": resp.choices[0].message.content, "status": "ok"}
+    except Exception as e:
+        return {"name": "ChatGPT", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+
+
+async def ask_claude(prompt):
+    try:
+        client = AsyncOpenAI(
+            api_key=ANTHROPIC_KEY,
+            base_url="https://api.anthropic.com/v1",
+        )
+        resp = await client.chat.completions.create(
+            model="claude-3-5-sonnet-20241022",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000, timeout=90,
+        )
+        return {"name": "Claude", "answer": resp.choices[0].message.content, "status": "ok"}
+    except Exception as e:
+        return {"name": "Claude", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+
+
+async def ask_deepseek(prompt):
+    try:
+        client = AsyncOpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+        resp = await client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000, timeout=90,
+        )
+        return {"name": "DeepSeek", "answer": resp.choices[0].message.content, "status": "ok"}
+    except Exception as e:
+        return {"name": "DeepSeek", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+
+
+async def ask_perplexity(prompt):
+    try:
+        client = AsyncOpenAI(api_key=PERPLEXITY_KEY, base_url="https://api.perplexity.ai")
+        resp = await client.chat.completions.create(
+            model="sonar-pro",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000, timeout=90,
+        )
+        return {"name": "Perplexity", "answer": resp.choices[0].message.content, "status": "ok"}
+    except Exception as e:
+        return {"name": "Perplexity", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+
+
+async def ask_grok(prompt):
+    try:
+        client = AsyncOpenAI(
+            api_key=GROK_KEY,
+            base_url="https://api.x.ai/v1",
+        )
+        resp = await client.chat.completions.create(
+            model="grok-2-latest",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000, timeout=90,
+        )
+        return {"name": "Grok", "answer": resp.choices[0].message.content, "status": "ok"}
+    except Exception as e:
+        return {"name": "Grok", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+
+
+async def ask_openrouter_free(prompt):
+    try:
+        client = AsyncOpenAI(
+            api_key=OPENROUTER_KEY,
+            base_url="https://openrouter.ai/api/v1",
+        )
+        resp = await client.chat.completions.create(
+            model="openrouter/free",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000, timeout=90,
+        )
+        return {"name": "OpenRouter", "answer": resp.choices[0].message.content, "status": "ok"}
+    except Exception as e:
+        return {"name": "OpenRouter", "answer": f"❌ {str(e)[:120]}", "status": "error"}
+
+
+# ================================================================
+# 3. ROUND 1 — सब AI से पहला जवाब
+# ================================================================
+async def round_1_initial(query):
+    tasks = [
+        ask_gemini(query),
+        ask_openai(query),
+        ask_claude(query),
+        ask_deepseek(query),
+        ask_perplexity(query),
+        ask_grok(query),
+        ask_openrouter_free(query),
+    ]
     return await asyncio.gather(*tasks)
 
 
-async def judge_answers(query, results):
-    valid = [r for r in results if r["status"] == "ok"]
-    if not valid:
-        return "❌ सब AI fail हो गए। दोबारा try करें।"
-
-    text = "\n\n".join([f"### {r['name']}:\n{r['answer']}" for r in valid])
-    prompt = f"""तुम निष्पक्ष न्यायाधीश हो।
-
-**सवाल:** {query}
-
-**AI के जवाब:**
-{text}
-
-**काम:** सबकी तुलना करो, गलती सुधारो, सबसे सही final जवाब दो।
-
-**Format:**
-🎯 **सही जवाब:** ...
-📊 **कारण:** ...
-🔍 **हर AI का योगदान:** (संक्षेप में)
-💯 **Confidence:** X%"""
-
-    # पहले मुख्य जज, फिर बैकअप जज
-    judges_to_try = [JUDGE_MODEL] + JUDGE_FALLBACKS
-    for judge_id in judges_to_try:
-        try:
-            client = get_async_client()
-            resp = await client.chat.completions.create(
-                model=judge_id,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=2000,
-                temperature=0.3,
-                timeout=90,
-            )
-            return resp.choices[0].message.content
-        except Exception:
-            continue
-
-    return "❌ सब जज fail हो गए।"
-
-
-async def master_ai(query):
-    results = await get_all_answers(query)
-    final = await judge_answers(query, results)
-    return {"individual": results, "final": final}
-
-
 # ================================================================
-# DEBATE
+# 4. ROUND 2-3 — AI आपस में बहस करें, counter-argument बनाएं
 # ================================================================
-async def debate_round(query, prev_answers, rnd):
-    summary = "\n\n".join([f"**{n}:** {a}" for n, a in prev_answers.items()])
-    prompt = f"""सवाल: {query}
+async def debate_round(query, prev_answers, round_num):
+    summary = "\n\n".join([
+        f"**{a['name']}:**\n{a['answer']}"
+        for a in prev_answers if a["status"] == "ok"
+    ])
 
-**पिछले round में:**
+    debate_prompt = f"""तुम एक बुद्धिमान, तर्कशील AI हो।
+
+**User का सवाल:** {query}
+
+**पिछले round में बाकी AI ने यह कहा:**
 {summary}
 
-**Round {rnd}:** दूसरों की गलती पकड़ो, अपना जवाब सुधारो।"""
-    tasks = [ask_model(n, m, prompt) for n, m in MODELS.items()]
-    results = await asyncio.gather(*tasks)
-    return {r["name"]: r["answer"] for r in results if r["status"] == "ok"}
+**Round {round_num} — तुम्हारा काम (सख्ती से करो):**
+
+1. **दूसरों के जवाब पढ़ो** — कहाँ सही हैं, कहाँ गलत
+2. **Counter-argument बनाओ** — अगर किसी का जवाब उल्टा साबित हो तो कैसे?
+3. **Evidence माँगो** — किस तथ्य, आँकड़े या स्रोत से पक्का होता है?
+4. **Weak points पकड़ो** — किसी की बात में कमी है तो उजागर करो
+5. **अपना सुधारा हुआ जवाब दो** — सबसे मजबूत तर्क के साथ
+
+**सिर्फ अपना updated जवाब लिखो — भूमिका नहीं, बहाना नहीं।**
+"""
+
+    tasks = [
+        ask_gemini(debate_prompt),
+        ask_openai(debate_prompt),
+        ask_claude(debate_prompt),
+        ask_deepseek(debate_prompt),
+        ask_perplexity(debate_prompt),
+        ask_grok(debate_prompt),
+        ask_openrouter_free(debate_prompt),
+    ]
+    return await asyncio.gather(*tasks)
 
 
-async def run_debate(query, rounds=DEBATE_ROUNDS):
-    initial = await get_all_answers(query)
-    answers = {r["name"]: r["answer"] for r in initial if r["status"] == "ok"}
-    history = [{"round": 0, "answers": answers.copy()}]
+# ================================================================
+# 5. SUPREME JUDGE — हर जवाब पर सख्त जाँच
+# ================================================================
+async def supreme_judge(query, all_rounds):
+    summary_parts = []
+    for rnd in all_rounds:
+        rn = rnd["round"]
+        valid = [a for a in rnd["answers"] if a["status"] == "ok"]
+        text = "\n\n".join([f"**{a['name']}:**\n{a['answer']}" for a in valid])
+        summary_parts.append(f"### Round {rn}\n{text}")
 
-    for i in range(1, rounds + 1):
-        answers = await debate_round(query, answers, i)
-        history.append({"round": i, "answers": answers.copy()})
+    full_debate = "\n\n---\n\n".join(summary_parts)
 
-    final_prompt = f"सवाल: {query}\n\n{rounds} round debate के बाद final जवाब:\n\n"
-    for n, a in answers.items():
-        final_prompt += f"**{n}:** {a}\n\n"
-    final_prompt += "\nConsensus निकालकर final जवाब दो + Confidence %"
+    judge_prompt = f"""तुम Supreme Court के मुख्य न्यायाधीश हो।
+नीचे {len(all_rounds)} round की पूरी बहस है — कई AI ने हिस्सा लिया।
 
-    judges_to_try = [JUDGE_MODEL] + JUDGE_FALLBACKS
-    final = "❌ सब जज fail हो गए।"
-    for judge_id in judges_to_try:
+**User का सवाल:**
+{query}
+
+**पूरी बहस:**
+{full_debate}
+
+============================================================
+तुम्हारा काम — 7 सख्त चरणों में (कोई चरण न छोड़ो):
+============================================================
+
+**चरण 1 — सबको पढ़ो:** हर round के हर AI का जवाब ध्यान से पढ़ो।
+
+**चरण 2 — Cross-Verification:** कौन-कौन से AI एक ही बात कह रहे हैं? कहाँ टकराव है?
+
+**चरण 3 — Counter-Argument:** हर मुख्य जवाब के खिलाफ एक विरोधी तर्क बनाओ। "अगर यह गलत हुआ तो?"
+
+**चरण 4 — Evidence माँगो:** किस जवाब के पीछे तथ्य/आंकड़ा/स्रोत है? जिसके पीछे सबूत नहीं — उसे कमजोर मानो।
+
+**चरण 5 — Weak Points:** किस जवाब में कमी, अधूरापन, या शक है — उजागर करो।
+
+**चरण 6 — Consensus:** बहुमत किस बात पर सहमत है? अल्पमत क्या कह रहा है?
+
+**चरण 7 — FINAL VERDICT:** वह जवाब दो जो सारी जाँच में टिक गया। ऐसा जवाब जिस पर कोई उंगली न उठा सके।
+
+============================================================
+Output Format (हिंदी में, साफ-साफ):
+============================================================
+
+🎯 **अंतिम सही जवाब (Final Verdict):**
+[सबसे सही, पूरा, स्पष्ट और पक्का जवाब — सबूत के साथ]
+
+🧪 **Counter-Arguments की जाँच:**
+[कौन-कौन से विरोधी तर्क उठाए गए, और वे कैसे खारिज हुए]
+
+📊 **Evidence (सबूत):**
+[किस तथ्य, आंकड़े या स्रोत के आधार पर यह जवाब सही है]
+
+🤝 **Consensus (सहमति):**
+[कितने AI एक ही बात पर आए — नाम के साथ]
+
+⚠️ **Weak Points (कमजोरियाँ):**
+[कहाँ अभी भी शक बाकी है — पूरी ईमानदारी से]
+
+🔍 **हर AI का योगदान:**
+- Gemini: [क्या कहा]
+- ChatGPT: [क्या कहा]
+- Claude: [क्या कहा]
+- DeepSeek: [क्या कहा]
+- Perplexity: [क्या कहा]
+- Grok: [क्या कहा]
+- OpenRouter: [क्या कहा]
+
+💯 **Confidence:** [X]% — [क्यों इतना? बाकी शक क्यों?]
+
+🛡️ **क्या यह जवाब काटा जा सकता है?** [हाँ/नहीं — कारण सहित]
+"""
+
+    # Judge chain: Claude → GPT-4o → DeepSeek → Gemini
+    judges = [
+        ("Claude", ANTHROPIC_KEY, "https://api.anthropic.com/v1", "claude-3-5-sonnet-20241022"),
+        ("ChatGPT", OPENAI_KEY, None, "gpt-4o-mini"),
+        ("DeepSeek", DEEPSEEK_KEY, "https://api.deepseek.com", "deepseek-chat"),
+        ("Grok", GROK_KEY, "https://api.x.ai/v1", "grok-2-latest"),
+    ]
+
+    for judge_name, key, base_url, model in judges:
         try:
-            client = get_async_client()
+            client = AsyncOpenAI(api_key=key, base_url=base_url) if base_url else AsyncOpenAI(api_key=key)
             resp = await client.chat.completions.create(
-                model=judge_id,
-                messages=[{"role": "user", "content": final_prompt}],
-                max_tokens=2000,
-                temperature=0.3,
-                timeout=90,
+                model=model,
+                messages=[{"role": "user", "content": judge_prompt}],
+                max_tokens=5000,
+                timeout=180,
             )
-            final = resp.choices[0].message.content
-            break
+            return f"**Judge: {judge_name}**\n\n" + resp.choices[0].message.content
         except Exception:
             continue
 
-    return {"debate_history": history, "final": final}
+    return "❌ सब Judge fail हो गए।"
 
 
 # ================================================================
-# IMAGE + VOICE
+# 6. पूरा Master Flow
 # ================================================================
-def enhance_prompt(user_input):
-    try:
-        client = get_sync_client()
-        resp = client.chat.completions.create(
-            model="google/gemma-4-26b-a4b-it:free",
-            messages=[{"role": "user", "content":
-                f"Convert to detailed English image prompt: {user_input}. Output only the prompt."}],
-            max_tokens=300,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception:
-        return user_input
+async def master_ai(query, total_rounds=3):
+    all_rounds = []
 
+    # Round 1 — पहला जवाब
+    r1 = await round_1_initial(query)
+    all_rounds.append({"round": 1, "answers": r1})
 
-def generate_image(prompt, model_key="Flux Schnell"):
-    try:
-        client = get_sync_client()
-        resp = client.chat.completions.create(
-            model=IMAGE_MODELS.get(model_key, IMAGE_MODELS["Flux Schnell"]),
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=1000,
-        )
-        msg = resp.choices[0].message
-        if hasattr(msg, "images") and msg.images:
-            url = msg.images[0].get("image_url", {}).get("url", "")
-            if url.startswith("data:image"):
-                return {"status": "ok", "image": base64.b64decode(url.split(",")[1])}
-            return {"status": "ok", "url": url}
-        return {"status": "error", "message": "कोई image नहीं मिली"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)[:150]}
+    # Round 2-N — बहस
+    for i in range(2, total_rounds + 1):
+        prev = all_rounds[-1]["answers"]
+        rN = await debate_round(query, prev, i)
+        all_rounds.append({"round": i, "answers": rN})
 
+    # Final Supreme Judge
+    final = await supreme_judge(query, all_rounds)
 
-def transcribe_audio(audio_bytes):
-    try:
-        client = get_sync_client()
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            tmp.write(audio_bytes)
-            path = tmp.name
-        with open(path, "rb") as f:
-            resp = client.audio.transcriptions.create(
-                model="openai/whisper-1", file=f)
-        os.unlink(path)
-        return {"status": "ok", "text": resp.text}
-    except Exception as e:
-        return {"status": "error", "message": str(e)[:150]}
+    return {"rounds": all_rounds, "final": final}
 
 
 # ================================================================
-# STREAMLIT UI
+# 7. Streamlit UI
 # ================================================================
 st.set_page_config(page_title="Master AI", page_icon="🧠", layout="wide")
 
@@ -360,140 +319,54 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())[:8]
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 with st.sidebar:
     st.markdown("### 🧠 Master AI")
-    st.caption(f"Session: `{st.session_state.session_id}`")
-
-    if not get_api_key():
-        st.error("⚠️ API Key नहीं मिली! Settings → Secrets check करें।")
-
+    st.caption("Supreme Court System v2")
     st.divider()
-    mode = st.radio("**🎯 Mode:**",
-        ["💬 Chat (Consensus)", "🥊 Debate", "🎨 Image Generation"],
-        label_visibility="collapsed")
-
+    st.markdown("**🤖 7 AI:**")
+    for n in ["Gemini", "ChatGPT", "Claude", "DeepSeek", "Perplexity", "Grok", "OpenRouter"]:
+        st.markdown(f'<span class="badge">• {n}</span>', unsafe_allow_html=True)
     st.divider()
-    st.markdown("**🤖 Models:**")
-    for name in MODELS.keys():
-        st.markdown(f'<span class="badge">• {name}</span>', unsafe_allow_html=True)
-
+    rounds = st.slider("Debate Rounds", 1, 5, 3, 
+                       help="3 = सबसे बेहतर | 4-5 = गहरे सवालों के लिए")
     st.divider()
-    voice_on = st.toggle("🎤 Voice Input", value=False)
+    if st.button("🧹 Clear Chat"):
+        st.session_state.messages = []
+        st.rerun()
 
-    st.divider()
-    with st.expander("📜 पुरानी चैट"):
-        sessions = get_all_sessions()
-        if sessions:
-            for sid, cnt in sessions:
-                c1, c2 = st.columns([3, 1])
-                c1.caption(f"`{sid}` • {cnt} msgs")
-                if c2.button("🗑️", key=f"d_{sid}"):
-                    clear_session(sid); st.rerun()
-        else:
-            st.caption("खाली है")
-
-    if st.button("🧹 Clear Current"):
-        st.session_state.messages = []; st.rerun()
-    if st.button("⚠️ Delete All"):
-        clear_all(); st.session_state.messages = []; st.rerun()
-
-st.markdown('<div class="big-title">🧠 Master AI</div>', unsafe_allow_html=True)
-st.caption("Multi-AI · Consensus · Debate · Image · Voice")
-
-if not st.session_state.messages:
-    for role, content in get_history(st.session_state.session_id):
-        st.session_state.messages.append({"role": role, "content": content})
+st.markdown('<div class="big-title">🧠 Master AI — Supreme Court</div>', unsafe_allow_html=True)
+st.caption("7 AI · 3 Round Debate · Cross-Verification · Strict Judge")
 
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-user_input = None
-if voice_on:
-    try:
-        from streamlit_mic_recorder import mic_recorder
-        audio = mic_recorder(start_prompt="🎤 बोलें", stop_prompt="⏹️ रोकें",
-                             just_once=True, key="mic")
-        if audio and audio.get("bytes"):
-            with st.spinner("🎧 सुन रहे हैं..."):
-                r = transcribe_audio(audio["bytes"])
-            if r["status"] == "ok":
-                user_input = r["text"]
-                st.success(f"सुना: {user_input}")
-            else:
-                st.error(r["message"])
-    except ImportError:
-        st.warning("`streamlit-mic-recorder` install करें")
-
 prompt = st.chat_input("कुछ भी पूछें...")
+
 if prompt:
-    user_input = prompt
-
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
-    save_message(st.session_state.session_id, "user", user_input, mode)
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(prompt)
 
-    if "Chat" in mode:
-        with st.chat_message("assistant"):
-            with st.spinner("🤖 सब AI से जवाब ला रहे हैं..."):
-                result = asyncio.run(master_ai(user_input))
-            cid = save_message(st.session_state.session_id, "assistant",
-                               result["final"], "chat")
-            save_ai_responses(cid, result["individual"])
-            with st.expander("🔍 सब AI का जवाब देखें"):
-                for r in result["individual"]:
-                    icon = "✅" if r["status"] == "ok" else "❌"
-                    st.markdown(f"**{icon} {r['name']}**")
-                    st.markdown(r["answer"])
+    with st.chat_message("assistant"):
+        prog = st.progress(0, text="🤖 7 AI जवाब दे रहे हैं...")
+        result = asyncio.run(master_ai(prompt, total_rounds=rounds))
+        prog.progress(100, text="✅ पूरा")
+
+        for rnd in result["rounds"]:
+            with st.expander(f"🥊 Round {rnd['round']} — पूरी बहस", expanded=False):
+                for a in rnd["answers"]:
+                    icon = "✅" if a["status"] == "ok" else "❌"
+                    st.markdown(f"**{icon} {a['name']}**")
+                    st.markdown(a["answer"])
                     st.divider()
-            st.markdown("### ⚖️ Judge का अंतिम निर्णय")
-            st.markdown(result["final"])
-            st.session_state.messages.append(
-                {"role": "assistant", "content": result["final"]})
 
-    elif "Debate" in mode:
-        with st.chat_message("assistant"):
-            prog = st.progress(0, text="🥊 Debate शुरू...")
-            result = asyncio.run(run_debate(user_input, DEBATE_ROUNDS))
-            prog.progress(100, text="✅ पूरा")
-            with st.expander("🥊 पूरी बहस देखें"):
-                for e in result["debate_history"]:
-                    st.markdown(f"### Round {e['round']}")
-                    for n, a in e["answers"].items():
-                        st.markdown(f"**{n}:** {a}")
-                        st.divider()
-            st.markdown("### ⚖️ Debate का निर्णय")
-            st.markdown(result["final"])
-            save_message(st.session_state.session_id, "assistant",
-                         result["final"], "debate")
-            st.session_state.messages.append(
-                {"role": "assistant", "content": result["final"]})
+        st.markdown("## ⚖️ Supreme Judge का अंतिम फैसला")
+        st.markdown(result["final"])
 
-    elif "Image" in mode:
-        with st.chat_message("assistant"):
-            with st.spinner("🎨 Prompt enhance..."):
-                enh = enhance_prompt(user_input)
-            st.caption(f"Enhanced: *{enh}*")
-            with st.spinner("🖼️ Image बना रहे हैं..."):
-                img = generate_image(enh)
-            if img["status"] == "ok":
-                if img.get("url"):
-                    st.image(img["url"], caption=user_input)
-                    resp_text = f"🖼️ [Download]({img['url']})"
-                else:
-                    st.image(img["image"], caption=user_input)
-                    resp_text = f"🖼️ Image: {user_input}"
-            else:
-                resp_text = f"❌ {img['message']}"
-                st.error(resp_text)
-            save_message(st.session_state.session_id, "assistant",
-                         resp_text, "image")
-            st.session_state.messages.append(
-                {"role": "assistant", "content": resp_text})
+        st.session_state.messages.append(
+            {"role": "assistant", "content": result["final"]}
+        )
