@@ -1,5 +1,5 @@
 # ================================================================
-# 🧠 Master AI — Fixed Version
+# 🧠 Master AI — Complete Fixed Version
 # ================================================================
 
 import os
@@ -40,15 +40,35 @@ TIMEOUT = 60
 DEBATE_ROUNDS = 2
 
 
-# ✅ FIXED: Lazy client creation
+# ================================================================
+# API KEY & CLIENTS (sirf ek baar - yahan)
+# ================================================================
 def get_api_key():
-    """Streamlit secrets + env dono se key lo"""
+    """Streamlit secrets + env dono se key lo - BULLETPROOF"""
+    # Try 1: Streamlit secrets - safe get()
     try:
-        if "OPENROUTER_API_KEY" in st.secrets:
-            return st.secrets["OPENROUTER_API_KEY"]
+        key = st.secrets.get("OPENROUTER_API_KEY")
+        if key:
+            return str(key).strip()
     except Exception:
         pass
-    return os.getenv("OPENROUTER_API_KEY")
+
+    # Try 2: st.secrets dictionary access
+    try:
+        if "OPENROUTER_API_KEY" in st.secrets:
+            return str(st.secrets["OPENROUTER_API_KEY"]).strip()
+    except Exception:
+        pass
+
+    # Try 3: Environment variable (fallback)
+    try:
+        key = os.getenv("OPENROUTER_API_KEY")
+        if key:
+            return str(key).strip()
+    except Exception:
+        pass
+
+    return None
 
 
 def get_async_client():
@@ -156,7 +176,7 @@ init_db()
 # ================================================================
 async def ask_model(name, model_id, query):
     try:
-        client = get_async_client()  # ✅ lazy
+        client = get_async_client()
         resp = await client.chat.completions.create(
             model=model_id,
             messages=[{"role": "user", "content": query}],
@@ -196,7 +216,7 @@ async def judge_answers(query, results):
 💯 **Confidence:** X%"""
 
     try:
-        client = get_async_client()  # ✅ lazy
+        client = get_async_client()
         resp = await client.chat.completions.create(
             model=JUDGE_MODEL,
             messages=[{"role": "user", "content": prompt}],
@@ -246,7 +266,7 @@ async def run_debate(query, rounds=DEBATE_ROUNDS):
     final_prompt += "\nConsensus निकालकर final जवाब दो + Confidence %"
 
     try:
-        client = get_async_client()  # ✅
+        client = get_async_client()
         resp = await client.chat.completions.create(
             model=JUDGE_MODEL,
             messages=[{"role": "user", "content": final_prompt}],
@@ -262,11 +282,11 @@ async def run_debate(query, rounds=DEBATE_ROUNDS):
 
 
 # ================================================================
-# IMAGE + VOICE (abhi ke liye placeholder — pehle chat chal jaye)
+# IMAGE + VOICE
 # ================================================================
 def enhance_prompt(user_input):
     try:
-        client = get_sync_client()  # ✅
+        client = get_sync_client()
         resp = client.chat.completions.create(
             model="google/gemini-2.0-flash-exp:free",
             messages=[{"role": "user", "content":
@@ -280,7 +300,7 @@ def enhance_prompt(user_input):
 
 def generate_image(prompt, model_key="Flux Schnell"):
     try:
-        client = get_sync_client()  # ✅
+        client = get_sync_client()
         resp = client.chat.completions.create(
             model=IMAGE_MODELS.get(model_key, IMAGE_MODELS["Flux Schnell"]),
             messages=[{"role": "user", "content": prompt}],
@@ -299,7 +319,7 @@ def generate_image(prompt, model_key="Flux Schnell"):
 
 def transcribe_audio(audio_bytes):
     try:
-        client = get_sync_client()  # ✅
+        client = get_sync_client()
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp.write(audio_bytes)
             path = tmp.name
