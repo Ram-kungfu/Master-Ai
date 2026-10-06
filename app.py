@@ -1,5 +1,5 @@
 # ================================================================
-# 🧠 Master AI — Complete Final Version
+# 🧠 Master AI — Complete Final Version (11 AI + 3 Judge Fallback)
 # ================================================================
 
 import os
@@ -20,25 +20,28 @@ load_dotenv()
 BASE_URL = "https://openrouter.ai/api/v1"
 DB_PATH = "master_ai_history.db"
 
-# ✅ स्मार्ट राउटर - खुद कोई भी चालू फ्री मॉडल चुन लेगा
+# ✅ 8 असली AI + 3 राउटर = 11 मॉडल
 MODELS = {
-    # 8 असली AI — सब मुफ़्त
-    "DeepSeek":    "deepseek/deepseek-r1:free",
-    "Qwen":        "qwen/qwen3.6-plus:free",
-    "Llama":       "meta-llama/llama-3.3-70b-instruct:free",
-    "GPT-OSS":     "openai/gpt-oss-120b:free",
-    "MiniMax":     "minimax/minimax-m2.5:free",
-    "Nemotron":    "nvidia/nemotron-3-super-120b-a12b:free",
-    "Mistral":     "mistralai/mistral-small-3.1-24b-instruct:free",
-    "Gemma":       "google/gemma-4-26b-a4b-it:free",
-
-    # 3 राउटर — बैकअप के लिए
-    "Router 1":    "openrouter/free",
-    "Router 2":    "openrouter/free",
-    "Router 3":    "openrouter/free",
+    "DeepSeek":   "deepseek/deepseek-r1:free",
+    "Qwen":       "qwen/qwen3.6-plus:free",
+    "Llama":      "meta-llama/llama-3.3-70b-instruct:free",
+    "GPT-OSS":    "openai/gpt-oss-120b:free",
+    "MiniMax":    "minimax/minimax-m2.5:free",
+    "Nemotron":   "nvidia/nemotron-3-super-120b-a12b:free",
+    "Mistral":    "mistralai/mistral-small-3.1-24b-instruct:free",
+    "Gemma":      "google/gemma-4-26b-a4b-it:free",
+    "Router 1":   "openrouter/free",
+    "Router 2":   "openrouter/free",
+    "Router 3":   "openrouter/free",
 }
 
-JUDGE_MODEL = "deepseek/deepseek-r1:free"
+# ✅ जज — 1 मुख्य + 2 बैकअप
+JUDGE_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+JUDGE_FALLBACKS = [
+    "deepseek/deepseek-r1:free",
+    "openrouter/free",
+]
+
 IMAGE_MODELS = {
     "Flux Schnell": "black-forest-labs/flux-schnell",
     "DALL-E 3":     "openai/dall-e-3",
@@ -54,27 +57,23 @@ DEBATE_ROUNDS = 2
 # API KEY & CLIENTS
 # ================================================================
 def get_api_key():
-    """Streamlit secrets + env dono se key lo"""
     try:
         key = st.secrets.get("OPENROUTER_API_KEY")
         if key:
             return str(key).strip()
     except Exception:
         pass
-
     try:
         if "OPENROUTER_API_KEY" in st.secrets:
             return str(st.secrets["OPENROUTER_API_KEY"]).strip()
     except Exception:
         pass
-
     try:
         key = os.getenv("OPENROUTER_API_KEY")
         if key:
             return str(key).strip()
     except Exception:
         pass
-
     return None
 
 
@@ -220,18 +219,23 @@ async def judge_answers(query, results):
 🔍 **हर AI का योगदान:** (संक्षेप में)
 💯 **Confidence:** X%"""
 
-    try:
-        client = get_async_client()
-        resp = await client.chat.completions.create(
-            model=JUDGE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2000,
-            temperature=0.3,
-            timeout=90,
-        )
-        return resp.choices[0].message.content
-    except Exception as e:
-        return f"❌ Judge error: {str(e)[:120]}"
+    # पहले मुख्य जज, फिर बैकअप जज
+    judges_to_try = [JUDGE_MODEL] + JUDGE_FALLBACKS
+    for judge_id in judges_to_try:
+        try:
+            client = get_async_client()
+            resp = await client.chat.completions.create(
+                model=judge_id,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2000,
+                temperature=0.3,
+                timeout=90,
+            )
+            return resp.choices[0].message.content
+        except Exception:
+            continue
+
+    return "❌ सब जज fail हो गए।"
 
 
 async def master_ai(query):
@@ -270,18 +274,22 @@ async def run_debate(query, rounds=DEBATE_ROUNDS):
         final_prompt += f"**{n}:** {a}\n\n"
     final_prompt += "\nConsensus निकालकर final जवाब दो + Confidence %"
 
-    try:
-        client = get_async_client()
-        resp = await client.chat.completions.create(
-            model=JUDGE_MODEL,
-            messages=[{"role": "user", "content": final_prompt}],
-            max_tokens=2000,
-            temperature=0.3,
-            timeout=90,
-        )
-        final = resp.choices[0].message.content
-    except Exception as e:
-        final = f"❌ {str(e)[:120]}"
+    judges_to_try = [JUDGE_MODEL] + JUDGE_FALLBACKS
+    final = "❌ सब जज fail हो गए।"
+    for judge_id in judges_to_try:
+        try:
+            client = get_async_client()
+            resp = await client.chat.completions.create(
+                model=judge_id,
+                messages=[{"role": "user", "content": final_prompt}],
+                max_tokens=2000,
+                temperature=0.3,
+                timeout=90,
+            )
+            final = resp.choices[0].message.content
+            break
+        except Exception:
+            continue
 
     return {"debate_history": history, "final": final}
 
@@ -293,7 +301,7 @@ def enhance_prompt(user_input):
     try:
         client = get_sync_client()
         resp = client.chat.completions.create(
-            model="google/gemini-2.5-flash-preview:free",
+            model="google/gemma-4-26b-a4b-it:free",
             messages=[{"role": "user", "content":
                 f"Convert to detailed English image prompt: {user_input}. Output only the prompt."}],
             max_tokens=300,
