@@ -47,7 +47,7 @@ IMAGE_MODELS = {
     "DALL-E 3":     "openai/dall-e-3",
 }
 
-MAX_TOKENS = 900
+MAX_TOKENS = 30000
 TEMPERATURE = 0.7
 TIMEOUT = 60
 DEBATE_ROUNDS = 2
