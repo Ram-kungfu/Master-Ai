@@ -22,10 +22,23 @@ DB_PATH = "master_ai_history.db"
 
 # ✅ स्मार्ट राउटर - खुद कोई भी चालू फ्री मॉडल चुन लेगा
 MODELS = {
-    "AI Consensus": "openrouter/free",
+    # 8 असली AI — सब मुफ़्त
+    "DeepSeek":    "deepseek/deepseek-r1:free",
+    "Qwen":        "qwen/qwen3.6-plus:free",
+    "Llama":       "meta-llama/llama-3.3-70b-instruct:free",
+    "GPT-OSS":     "openai/gpt-oss-120b:free",
+    "MiniMax":     "minimax/minimax-m2.5:free",
+    "Nemotron":    "nvidia/nemotron-3-super-120b-a12b:free",
+    "Mistral":     "mistralai/mistral-small-3.1-24b-instruct:free",
+    "Gemma":       "google/gemma-4-26b-a4b-it:free",
+
+    # 3 राउटर — बैकअप के लिए
+    "Router 1":    "openrouter/free",
+    "Router 2":    "openrouter/free",
+    "Router 3":    "openrouter/free",
 }
 
-JUDGE_MODEL = "openrouter/free"
+JUDGE_MODEL = "deepseek/deepseek-r1:free"
 IMAGE_MODELS = {
     "Flux Schnell": "black-forest-labs/flux-schnell",
     "DALL-E 3":     "openai/dall-e-3",
