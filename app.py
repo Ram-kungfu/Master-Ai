@@ -1,5 +1,5 @@
 # ================================================================
-# 🧠 Master AI — Supreme Court System (Final Fixed)
+# 🧠 Master AI — Supreme Court System (Full Final)
 # 7 AI + 3 Round + Claude Judge + History + Image + PDF + Voice
 # ================================================================
 
@@ -65,6 +65,7 @@ def save_message(session_id, role, content):
 
 
 def load_history(session_id):
+    """History load करें — dict format में वापस करें"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
@@ -105,7 +106,7 @@ init_db()
 
 
 # ================================================================
-# 3. AI FUNCTIONS
+# 3. AI FUNCTIONS — 7 AI
 # ================================================================
 async def _ask_openrouter(model_id, prompt, name, image_b64=None):
     try:
@@ -133,6 +134,7 @@ async def _ask_openrouter(model_id, prompt, name, image_b64=None):
         return {"name": name, "answer": f"❌ {str(e)[:150]}", "status": "error"}
 
 
+# --- 1. Gemini ---
 async def ask_gemini(prompt, image_b64=None):
     r = await _ask_openrouter("google/gemini-2.5-flash", prompt, "Gemini", image_b64)
     if r["status"] == "ok":
@@ -155,6 +157,7 @@ async def ask_gemini(prompt, image_b64=None):
     return r
 
 
+# --- 2. ChatGPT ---
 async def ask_openai(prompt, image_b64=None):
     r = await _ask_openrouter("openai/gpt-4o-mini", prompt, "ChatGPT", image_b64)
     if r["status"] == "ok":
@@ -173,6 +176,7 @@ async def ask_openai(prompt, image_b64=None):
     return r
 
 
+# --- 3. Claude (ज़रूरी) ---
 async def ask_claude(prompt, image_b64=None):
     r = await _ask_openrouter("anthropic/claude-3.5-sonnet", prompt, "Claude", image_b64)
     if r["status"] == "ok":
@@ -191,6 +195,7 @@ async def ask_claude(prompt, image_b64=None):
     return r
 
 
+# --- 4. DeepSeek ---
 async def ask_deepseek(prompt, image_b64=None):
     r = await _ask_openrouter("deepseek/deepseek-chat", prompt, "DeepSeek")
     if r["status"] == "ok":
@@ -209,6 +214,7 @@ async def ask_deepseek(prompt, image_b64=None):
     return r
 
 
+# --- 5. Perplexity ---
 async def ask_perplexity(prompt, image_b64=None):
     r = await _ask_openrouter("perplexity/sonar-pro", prompt, "Perplexity")
     if r["status"] == "ok":
@@ -227,6 +233,7 @@ async def ask_perplexity(prompt, image_b64=None):
     return r
 
 
+# --- 6. Grok ---
 async def ask_grok(prompt, image_b64=None):
     r = await _ask_openrouter("x-ai/grok-2-vision-1212", prompt, "Grok", image_b64)
     if r["status"] == "ok":
@@ -245,18 +252,19 @@ async def ask_grok(prompt, image_b64=None):
     return r
 
 
+# --- 7. OpenRouter Free ---
 async def ask_openrouter_free(prompt, image_b64=None):
     return await _ask_openrouter("openrouter/free", prompt, "OpenRouter")
 
 
 # ================================================================
-# 4. ROUND 1
+# 4. ROUND 1 — सब AI से पहला जवाब
 # ================================================================
 async def round_1_initial(query, image_b64=None):
     tasks = [
         ask_gemini(query, image_b64),
         ask_openai(query, image_b64),
-        ask_claude(query, image_b64),
+        ask_claude(query, image_b64),      # ⭐ Claude शामिल
         ask_deepseek(query),
         ask_perplexity(query),
         ask_grok(query, image_b64),
@@ -266,7 +274,7 @@ async def round_1_initial(query, image_b64=None):
 
 
 # ================================================================
-# 5. ROUND 2-3
+# 5. ROUND 2-3 — AI आपस में बहस करें
 # ================================================================
 async def debate_round(query, prev_answers, round_num, image_b64=None):
     summary = "\n\n".join([
@@ -295,7 +303,7 @@ async def debate_round(query, prev_answers, round_num, image_b64=None):
     tasks = [
         ask_gemini(debate_prompt, image_b64),
         ask_openai(debate_prompt),
-        ask_claude(debate_prompt),
+        ask_claude(debate_prompt),         # ⭐ Claude शामिल
         ask_deepseek(debate_prompt),
         ask_perplexity(debate_prompt),
         ask_grok(debate_prompt),
@@ -305,7 +313,7 @@ async def debate_round(query, prev_answers, round_num, image_b64=None):
 
 
 # ================================================================
-# 6. SUPREME JUDGE
+# 6. SUPREME JUDGE — Claude पहला Judge
 # ================================================================
 async def supreme_judge(query, all_rounds):
     summary_parts = []
@@ -371,6 +379,7 @@ Output Format (हिंदी में):
 🛡️ **क्या यह जवाब काटा जा सकता है?** [हाँ/नहीं]
 """
 
+    # ⭐ Claude पहला Judge — फिर बाकी fallback
     judges = [
         ("Claude (OpenRouter)", OPENROUTER_KEY, OR_BASE, "anthropic/claude-3.5-sonnet"),
         ("Claude (Direct)", ANTHROPIC_KEY, "https://api.anthropic.com/v1", "claude-3-5-sonnet-20241022"),
@@ -608,7 +617,6 @@ if final_prompt:
     with st.chat_message("user"):
         st.markdown(display_msg)
 
-    # PDF content जोड़ें
     full_query = final_prompt
     if pdf_text:
         full_query = f"{pdf_text}\n\n{final_prompt}"
