@@ -1,6 +1,6 @@
 # ================================================================
-# 🧠 Master AI — Supreme Court System (Full Final)
-# 7 AI + 3 Round + Claude Judge + History + Image + PDF + Voice
+# 🧠 Master AI — Supreme Court System (Full Final + Gemini Judge)
+# 7 AI + 3 Round + Claude Judge + Gemini Fallback + History + Image + PDF + Voice
 # ================================================================
 
 import os
@@ -65,7 +65,6 @@ def save_message(session_id, role, content):
 
 
 def load_history(session_id):
-    """History load करें — dict format में वापस करें"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
@@ -74,7 +73,6 @@ def load_history(session_id):
     )
     rows = c.fetchall()
     conn.close()
-    # tuple को dict में बदलें
     fixed = []
     for row in rows:
         if isinstance(row, (list, tuple)) and len(row) >= 2:
@@ -134,7 +132,6 @@ async def _ask_openrouter(model_id, prompt, name, image_b64=None):
         return {"name": name, "answer": f"❌ {str(e)[:150]}", "status": "error"}
 
 
-# --- 1. Gemini ---
 async def ask_gemini(prompt, image_b64=None):
     r = await _ask_openrouter("google/gemini-2.5-flash", prompt, "Gemini", image_b64)
     if r["status"] == "ok":
@@ -157,7 +154,6 @@ async def ask_gemini(prompt, image_b64=None):
     return r
 
 
-# --- 2. ChatGPT ---
 async def ask_openai(prompt, image_b64=None):
     r = await _ask_openrouter("openai/gpt-4o-mini", prompt, "ChatGPT", image_b64)
     if r["status"] == "ok":
@@ -176,7 +172,6 @@ async def ask_openai(prompt, image_b64=None):
     return r
 
 
-# --- 3. Claude (ज़रूरी) ---
 async def ask_claude(prompt, image_b64=None):
     r = await _ask_openrouter("anthropic/claude-3.5-sonnet", prompt, "Claude", image_b64)
     if r["status"] == "ok":
@@ -195,7 +190,6 @@ async def ask_claude(prompt, image_b64=None):
     return r
 
 
-# --- 4. DeepSeek ---
 async def ask_deepseek(prompt, image_b64=None):
     r = await _ask_openrouter("deepseek/deepseek-chat", prompt, "DeepSeek")
     if r["status"] == "ok":
@@ -214,7 +208,6 @@ async def ask_deepseek(prompt, image_b64=None):
     return r
 
 
-# --- 5. Perplexity ---
 async def ask_perplexity(prompt, image_b64=None):
     r = await _ask_openrouter("perplexity/sonar-pro", prompt, "Perplexity")
     if r["status"] == "ok":
@@ -233,7 +226,6 @@ async def ask_perplexity(prompt, image_b64=None):
     return r
 
 
-# --- 6. Grok ---
 async def ask_grok(prompt, image_b64=None):
     r = await _ask_openrouter("x-ai/grok-2-vision-1212", prompt, "Grok", image_b64)
     if r["status"] == "ok":
@@ -252,7 +244,6 @@ async def ask_grok(prompt, image_b64=None):
     return r
 
 
-# --- 7. OpenRouter Free ---
 async def ask_openrouter_free(prompt, image_b64=None):
     return await _ask_openrouter("openrouter/free", prompt, "OpenRouter")
 
@@ -264,7 +255,7 @@ async def round_1_initial(query, image_b64=None):
     tasks = [
         ask_gemini(query, image_b64),
         ask_openai(query, image_b64),
-        ask_claude(query, image_b64),      # ⭐ Claude शामिल
+        ask_claude(query, image_b64),
         ask_deepseek(query),
         ask_perplexity(query),
         ask_grok(query, image_b64),
@@ -303,7 +294,7 @@ async def debate_round(query, prev_answers, round_num, image_b64=None):
     tasks = [
         ask_gemini(debate_prompt, image_b64),
         ask_openai(debate_prompt),
-        ask_claude(debate_prompt),         # ⭐ Claude शामिल
+        ask_claude(debate_prompt),
         ask_deepseek(debate_prompt),
         ask_perplexity(debate_prompt),
         ask_grok(debate_prompt),
@@ -313,7 +304,7 @@ async def debate_round(query, prev_answers, round_num, image_b64=None):
 
 
 # ================================================================
-# 6. SUPREME JUDGE — Claude पहला Judge
+# 6. SUPREME JUDGE — Claude पहला Judge + Gemini Fallback
 # ================================================================
 async def supreme_judge(query, all_rounds):
     summary_parts = []
@@ -379,27 +370,37 @@ Output Format (हिंदी में):
 🛡️ **क्या यह जवाब काटा जा सकता है?** [हाँ/नहीं]
 """
 
-    # ⭐ Claude पहला Judge — फिर बाकी fallback
+    # ⭐ Claude पहला Judge — Gemini fallback
     judges = [
         ("Claude (OpenRouter)", OPENROUTER_KEY, OR_BASE, "anthropic/claude-3.5-sonnet"),
         ("Claude (Direct)", ANTHROPIC_KEY, "https://api.anthropic.com/v1", "claude-3-5-sonnet-20241022"),
         ("ChatGPT", OPENROUTER_KEY, OR_BASE, "openai/gpt-4o-mini"),
         ("DeepSeek", OPENROUTER_KEY, OR_BASE, "deepseek/deepseek-chat"),
         ("Grok", OPENROUTER_KEY, OR_BASE, "x-ai/grok-2-latest"),
+        ("Gemini", GEMINI_KEY, None, "gemini-2.5-flash"),
     ]
 
     for judge_name, key, base_url, model in judges:
         if not key:
             continue
         try:
-            client = AsyncOpenAI(api_key=key, base_url=base_url)
-            resp = await client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": judge_prompt}],
-                max_tokens=5000,
-                timeout=180,
-            )
-            return f"**Judge: {judge_name}**\n\n" + resp.choices[0].message.content
+            # Gemini के लिए genai
+            if judge_name == "Gemini":
+                client = genai.Client(api_key=key)
+                resp = await client.aio.models.generate_content(
+                    model=model, contents=judge_prompt,
+                )
+                return f"**Judge: {judge_name}**\n\n" + resp.text
+            else:
+                # बाकी सब OpenAI-compatible
+                client = AsyncOpenAI(api_key=key, base_url=base_url)
+                resp = await client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": judge_prompt}],
+                    max_tokens=5000,
+                    timeout=180,
+                )
+                return f"**Judge: {judge_name}**\n\n" + resp.choices[0].message.content
         except Exception:
             continue
 
@@ -438,7 +439,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Session
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
 if "messages" not in st.session_state:
@@ -509,7 +509,8 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-    if st.session_state.messages:
+    # ✅ Download — हमेशा दिखे (chat खाली हो तो भी)
+    if st.session_state.messages and len(st.session_state.messages) > 0:
         parts = []
         for m in st.session_state.messages:
             if isinstance(m, dict):
@@ -521,13 +522,15 @@ with st.sidebar:
                 continue
             parts.append(f"**{str(role).upper()}:**\n{content}")
         chat_text = "\n\n".join(parts)
+    else:
+        chat_text = "अभी कोई chat नहीं — पहले सवाल पूछें।"
 
-        st.download_button(
-            "📥 Download Chat",
-            data=chat_text,
-            file_name=f"master_ai_{st.session_state.session_id}.md",
-            mime="text/markdown"
-        )
+    st.download_button(
+        "📥 Download Chat",
+        data=chat_text,
+        file_name=f"master_ai_{st.session_state.session_id}.md",
+        mime="text/markdown"
+    )
 
     st.divider()
     if not OPENROUTER_KEY:
@@ -539,12 +542,10 @@ st.markdown('<div class="big-title">🧠 Master AI — Supreme Court</div>', uns
 st.caption("7 AI · 3 Round Debate · Judge · History · Image · PDF · Voice")
 
 
-# पुराने messages load करें
 if not st.session_state.messages:
     st.session_state.messages = load_history(st.session_state.session_id)
 
 
-# Display — पुराने messages
 for m in st.session_state.messages:
     if isinstance(m, dict):
         role = m.get("role", "user")
@@ -561,13 +562,11 @@ for m in st.session_state.messages:
                 st.code(content, language=None)
 
 
-# Image preview
 image_b64 = None
 if uploaded_image:
     st.image(uploaded_image, caption="Uploaded Image", width=300)
     image_b64 = base64.b64encode(uploaded_image.read()).decode("utf-8")
 
-# PDF preview
 pdf_text = ""
 if uploaded_pdf:
     try:
@@ -578,7 +577,6 @@ if uploaded_pdf:
         st.warning(f"PDF load error: {e}")
 
 
-# Voice input
 user_input_voice = None
 if voice_on:
     try:
@@ -595,7 +593,6 @@ if voice_on:
         st.warning("Voice के लिए `streamlit-mic-recorder` install करें")
 
 
-# Input
 prompt = st.chat_input("कुछ भी पूछें...")
 
 final_prompt = None
