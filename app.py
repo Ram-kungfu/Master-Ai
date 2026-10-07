@@ -378,7 +378,7 @@ Output Format (हिंदी में):
         ("ChatGPT", OPENROUTER_KEY, OR_BASE, "openai/gpt-4o-mini"),
         ("DeepSeek", OPENROUTER_KEY, OR_BASE, "deepseek/deepseek-chat"),
         ("Grok", OPENROUTER_KEY, OR_BASE, "x-ai/grok-2-latest"),
-        ("Gemini", GEMINI_KEY, None, "gemini-2.5-flash"),
+        ("Gemini", GEMINI_KEY, None, "gemini-3.5-flash-lite"),
         ("OpenRouter Free", OPENROUTER_KEY, OR_BASE, "openrouter/free"),
     ]
 
