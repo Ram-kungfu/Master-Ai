@@ -1,5 +1,5 @@
 # ================================================================
-# 🧠 Master AI — Supreme Court System (Full Complete)
+# 🧠 Master AI — Supreme Court System (Final Fixed)
 # 7 AI + 3 Round + Claude Judge + History + Image + PDF + Voice
 # ================================================================
 
@@ -37,7 +37,7 @@ DB_PATH = "master_ai_history.db"
 
 
 # ================================================================
-# 2. DATABASE — History
+# 2. DATABASE
 # ================================================================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -73,7 +73,14 @@ def load_history(session_id):
     )
     rows = c.fetchall()
     conn.close()
-    return rows
+    # tuple को dict में बदलें
+    fixed = []
+    for row in rows:
+        if isinstance(row, (list, tuple)) and len(row) >= 2:
+            fixed.append({"role": row[0], "content": row[1]})
+        elif isinstance(row, dict):
+            fixed.append(row)
+    return fixed
 
 
 def get_all_sessions():
@@ -324,17 +331,11 @@ async def supreme_judge(query, all_rounds):
 ============================================================
 
 **चरण 1 — सबको पढ़ो:** हर round के हर AI का जवाब ध्यान से पढ़ो।
-
-**चरण 2 — Cross-Verification:** कौन-कौन से AI एक ही बात कह रहे हैं? कहाँ टकराव है?
-
-**चरण 3 — Counter-Argument:** हर मुख्य जवाब के खिलाफ एक विरोधी तर्क बनाओ।
-
+**चरण 2 — Cross-Verification:** कौन-कौन से AI एक ही बात कह रहे हैं?
+**चरण 3 — Counter-Argument:** हर मुख्य जवाब के खिलाफ विरोधी तर्क बनाओ।
 **चरण 4 — Evidence:** किस जवाब के पीछे तथ्य/आंकड़ा/स्रोत है?
-
-**चरण 5 — Weak Points:** किस जवाब में कमी या शक है — उजागर करो।
-
+**चरण 5 — Weak Points:** किस जवाब में कमी या शक है।
 **चरण 6 — Consensus:** बहुमत किस बात पर सहमत है?
-
 **चरण 7 — FINAL VERDICT:** वह जवाब दो जो सारी जाँच में टिक गया।
 
 ============================================================
@@ -342,7 +343,7 @@ Output Format (हिंदी में):
 ============================================================
 
 🎯 **अंतिम सही जवाब (Final Verdict):**
-[सबसे सही, पूरा, स्पष्ट और पक्का जवाब]
+[सबसे सही, पूरा, स्पष्ट जवाब]
 
 🧪 **Counter-Arguments की जाँच:**
 [कौन-कौन से विरोधी तर्क उठाए गए]
@@ -365,9 +366,9 @@ Output Format (हिंदी में):
 - Grok: [क्या कहा]
 - OpenRouter: [क्या कहा]
 
-💯 **Confidence:** [X]% — [कारण]
+💯 **Confidence:** [X]%
 
-🛡️ **क्या यह जवाब काटा जा सकता है?** [हाँ/नहीं — कारण]
+🛡️ **क्या यह जवाब काटा जा सकता है?** [हाँ/नहीं]
 """
 
     judges = [
@@ -500,10 +501,18 @@ with st.sidebar:
         st.rerun()
 
     if st.session_state.messages:
-        chat_text = "\n\n".join([
-            f"**{m['role'].upper()}:**\n{m['content']}"
-            for m in st.session_state.messages
-        ])
+        parts = []
+        for m in st.session_state.messages:
+            if isinstance(m, dict):
+                role = m.get("role", "user")
+                content = m.get("content", "")
+            elif isinstance(m, (list, tuple)) and len(m) >= 2:
+                role, content = m[0], m[1]
+            else:
+                continue
+            parts.append(f"**{str(role).upper()}:**\n{content}")
+        chat_text = "\n\n".join(parts)
+
         st.download_button(
             "📥 Download Chat",
             data=chat_text,
@@ -521,18 +530,26 @@ st.markdown('<div class="big-title">🧠 Master AI — Supreme Court</div>', uns
 st.caption("7 AI · 3 Round Debate · Judge · History · Image · PDF · Voice")
 
 
-# पुराने messages
+# पुराने messages load करें
 if not st.session_state.messages:
     st.session_state.messages = load_history(st.session_state.session_id)
 
 
-# Display
+# Display — पुराने messages
 for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
-        if m["role"] == "assistant":
+    if isinstance(m, dict):
+        role = m.get("role", "user")
+        content = m.get("content", "")
+    elif isinstance(m, (list, tuple)) and len(m) >= 2:
+        role, content = m[0], m[1]
+    else:
+        continue
+
+    with st.chat_message(role):
+        st.markdown(content)
+        if role == "assistant":
             with st.expander("📋 Copy जवाब"):
-                st.code(m["content"], language=None)
+                st.code(content, language=None)
 
 
 # Image preview
@@ -545,9 +562,7 @@ if uploaded_image:
 pdf_text = ""
 if uploaded_pdf:
     try:
-        import io
         pdf_bytes = uploaded_pdf.read()
-        # Simple PDF text extraction
         pdf_text = f"[PDF: {uploaded_pdf.name}, {len(pdf_bytes)} bytes]"
         st.info(f"📄 PDF loaded: {uploaded_pdf.name}")
     except Exception as e:
@@ -566,7 +581,6 @@ if voice_on:
             key="mic"
         )
         if audio and audio.get("bytes"):
-            # Simple placeholder — Whisper यहाँ होगा
             user_input_voice = "🎤 [Voice input detected]"
     except ImportError:
         st.warning("Voice के लिए `streamlit-mic-recorder` install करें")
@@ -594,7 +608,7 @@ if final_prompt:
     with st.chat_message("user"):
         st.markdown(display_msg)
 
-    # अगर PDF है तो उसका content भी prompt में जोड़ें
+    # PDF content जोड़ें
     full_query = final_prompt
     if pdf_text:
         full_query = f"{pdf_text}\n\n{final_prompt}"
