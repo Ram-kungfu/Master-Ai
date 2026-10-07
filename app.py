@@ -31,7 +31,7 @@ ANTHROPIC_KEY  = get_secret("ANTHROPIC_API_KEY")
 DEEPSEEK_KEY   = get_secret("DEEPSEEK_API_KEY")
 PERPLEXITY_KEY = get_secret("PERPLEXITY_API_KEY")
 GROK_KEY       = get_secret("GROK_API_KEY")
-("OpenRouter Free", OPENROUTER_KEY, OR_BASE, "openrouter/free"),
+
 
 OR_BASE = "https://openrouter.ai/api/v1"
 DB_PATH = "master_ai_history.db"
@@ -379,6 +379,7 @@ Output Format (हिंदी में):
         ("DeepSeek", OPENROUTER_KEY, OR_BASE, "deepseek/deepseek-chat"),
         ("Grok", OPENROUTER_KEY, OR_BASE, "x-ai/grok-2-latest"),
         ("Gemini", GEMINI_KEY, None, "gemini-2.5-flash"),
+        ("OpenRouter Free", OPENROUTER_KEY, OR_BASE, "openrouter/free"),
     ]
 
     for judge_name, key, base_url, model in judges:
